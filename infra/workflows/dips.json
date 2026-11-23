@@ -1,0 +1,63 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": { "type": "Object", "defaultValue": {} }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": { "method": "DELETE", "relativePath": "evidence/{evidenceId}" }
+    }
+  },
+  "actions": {
+    "Void_evidence": {
+      "type": "ApiConnection",
+      "runAfter": {},
+      "inputs": {
+        "host": { "connection": { "name": "@parameters('$connections')['sql']['connectionId']" } },
+        "method": "post",
+        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('default'))},@{encodeURIComponent(encodeURIComponent('default'))}/procedures/@{encodeURIComponent(encodeURIComponent('[dbo].[usp_VoidEvidence]'))}",
+        "body": {
+          "evidenceId": "@triggerOutputs()['relativePathParameters']['evidenceId']",
+          "userId": "@int(coalesce(triggerOutputs()?['queries']?['userId'], '0'))",
+          "reason": "@triggerOutputs()?['queries']?['reason']"
+        }
+      }
+    },
+    "Result": {
+      "type": "Compose",
+      "runAfter": { "Void_evidence": ["Succeeded"] },
+      "inputs": "@first(body('Void_evidence')?['resultsets']?['Table1'])"
+    },
+    "If_voided": {
+      "type": "If",
+      "runAfter": { "Result": ["Succeeded"] },
+      "expression": { "and": [{ "equals": ["@outputs('Result')?['httpStatus']", 204] }] },
+      "actions": {
+        "Voided": {
+          "type": "Response",
+          "kind": "Http",
+          "runAfter": {},
+          "inputs": { "statusCode": 204 }
+        }
+      },
+      "else": {
+        "actions": {
+          "Not_voided": {
+            "type": "Response",
+            "kind": "Http",
+            "runAfter": {},
+            "inputs": {
+              "statusCode": "@outputs('Result')?['httpStatus']",
+              "headers": { "Content-Type": "application/json" },
+              "body": "@outputs('Result')"
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

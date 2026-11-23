@@ -1,0 +1,131 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": { "type": "Object", "defaultValue": {} },
+    "translatorKey": { "type": "SecureString" },
+    "translatorRegion": { "type": "String" }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "operationOptions": "EnableSchemaValidation",
+      "inputs": {
+        "method": "PUT",
+        "relativePath": "evidence/{evidenceId}",
+        "schema": {
+          "type": "object",
+          "required": ["userId"],
+          "properties": {
+            "userId": { "type": "integer" },
+            "caption": { "type": "string" },
+            "damageTags": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  },
+  "actions": {
+    "Update_evidence": {
+      "type": "ApiConnection",
+      "runAfter": {},
+      "inputs": {
+        "host": { "connection": { "name": "@parameters('$connections')['sql']['connectionId']" } },
+        "method": "post",
+        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('default'))},@{encodeURIComponent(encodeURIComponent('default'))}/procedures/@{encodeURIComponent(encodeURIComponent('[dbo].[usp_UpdateEvidence]'))}",
+        "body": {
+          "evidenceId": "@triggerOutputs()['relativePathParameters']['evidenceId']",
+          "userId": "@triggerBody()?['userId']",
+          "caption": "@triggerBody()?['caption']"
+        }
+      }
+    },
+    "Result": {
+      "type": "Compose",
+      "runAfter": { "Update_evidence": ["Succeeded"] },
+      "inputs": "@first(body('Update_evidence')?['resultsets']?['Table1'])"
+    },
+    "If_updated": {
+      "type": "If",
+      "runAfter": { "Result": ["Succeeded"] },
+      "expression": { "and": [{ "equals": ["@outputs('Result')?['httpStatus']", 200] }] },
+      "actions": {
+        "Translate_caption": {
+          "type": "Http",
+          "runAfter": {},
+          "inputs": {
+            "method": "POST",
+            "uri": "https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&to=en",
+            "headers": {
+              "Ocp-Apim-Subscription-Key": "@parameters('translatorKey')",
+              "Ocp-Apim-Subscription-Region": "@parameters('translatorRegion')",
+              "Content-Type": "application/json"
+            },
+            "body": [{ "Text": "@{coalesce(triggerBody()?['caption'], '')}" }]
+          },
+          "runtimeConfiguration": { "secureData": { "properties": ["inputs"] } }
+        },
+        "Get_metadata": {
+          "type": "ApiConnection",
+          "runAfter": {},
+          "inputs": {
+            "host": { "connection": { "name": "@parameters('$connections')['documentdb']['connectionId']" } },
+            "method": "get",
+            "path": "/v2/cosmosdb/@{encodeURIComponent('AccountNameFromSettings')}/dbs/@{encodeURIComponent('evidence')}/colls/@{encodeURIComponent('metadata')}/docs/@{encodeURIComponent(outputs('Result')?['evidenceId'])}",
+            "headers": { "x-ms-documentdb-raw-partitionkey": "\"@{outputs('Result')?['claimRef']}\"" }
+          }
+        },
+        "Changes": {
+          "type": "Compose",
+          "runAfter": { "Translate_caption": ["Succeeded"], "Get_metadata": ["Succeeded"] },
+          "inputs": {
+            "damageTags": "@coalesce(triggerBody()?['damageTags'], body('Get_metadata')?['damageTags'], json('[]'))",
+            "captionLang": "@body('Translate_caption')?[0]?['detectedLanguage']?['language']",
+            "captionEn": "@body('Translate_caption')?[0]?['translations']?[0]?['text']",
+            "updatedUtc": "@{utcNow()}"
+          }
+        },
+        "Save_metadata": {
+          "type": "ApiConnection",
+          "runAfter": { "Changes": ["Succeeded"] },
+          "inputs": {
+            "host": { "connection": { "name": "@parameters('$connections')['documentdb']['connectionId']" } },
+            "method": "post",
+            "path": "/v2/cosmosdb/@{encodeURIComponent('AccountNameFromSettings')}/dbs/@{encodeURIComponent('evidence')}/colls/@{encodeURIComponent('metadata')}/docs",
+            "headers": {
+              "x-ms-documentdb-raw-partitionkey": "\"@{outputs('Result')?['claimRef']}\"",
+              "x-ms-documentdb-is-upsert": true
+            },
+            "body": "@union(body('Get_metadata'), outputs('Changes'))"
+          }
+        },
+        "Updated": {
+          "type": "Response",
+          "kind": "Http",
+          "runAfter": { "Save_metadata": ["Succeeded"] },
+          "inputs": {
+            "statusCode": 200,
+            "headers": { "Content-Type": "application/json" },
+            "body": "@addProperty(removeProperty(outputs('Result'), 'httpStatus'), 'metadata', body('Save_metadata'))"
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Not_updated": {
+            "type": "Response",
+            "kind": "Http",
+            "runAfter": {},
+            "inputs": {
+              "statusCode": "@outputs('Result')?['httpStatus']",
+              "headers": { "Content-Type": "application/json" },
+              "body": "@outputs('Result')"
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

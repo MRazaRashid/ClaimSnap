@@ -1,0 +1,100 @@
+# ClaimSnap CI/CD - Azure DevOps pipeline connected to the GitHub repository.
+# Build: test and package the function, package the static front end.
+# Deploy (main branch only): publish the function and upload the site to the $web container.
+
+trigger:
+  branches:
+    include: [main]
+
+pr:
+  branches:
+    include: [main]
+
+variables:
+  azureServiceConnection: 'claimsnap-azure'   # Project settings > Service connections (Azure Resource Manager)
+  resourceGroup: 'rg-claimsnap-uks'
+  nodeVersion: '22.x'
+
+stages:
+  - stage: Build
+    jobs:
+      - job: build
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: NodeTool@0
+            inputs:
+              versionSpec: $(nodeVersion)
+            displayName: Use Node $(nodeVersion)
+
+          - script: npm ci && npm test
+            workingDirectory: functions
+            displayName: Install and run function tests
+
+          - script: |
+              for f in frontend/js/*.js; do node --check "$f" || exit 1; done
+            displayName: Check front-end scripts for syntax errors
+
+          - script: npm prune --omit=dev
+            workingDirectory: functions
+            displayName: Remove dev dependencies
+
+          - task: ArchiveFiles@2
+            inputs:
+              rootFolderOrFile: functions
+              includeRootFolder: false
+              archiveFile: $(Build.ArtifactStagingDirectory)/functions.zip
+            displayName: Package function app
+
+          - publish: $(Build.ArtifactStagingDirectory)/functions.zip
+            artifact: functions
+          - publish: frontend
+            artifact: web
+          - publish: scripts
+            artifact: scripts
+
+  - stage: Deploy
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: deploy
+        pool:
+          vmImage: ubuntu-latest
+        environment: claimsnap-production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: AzureCLI@2
+                  displayName: Look up resource names
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    inlineScript: |
+                      out() { az deployment group show -g $(resourceGroup) -n claimsnap-main --query "properties.outputs.$1.value" -o tsv; }
+                      echo "##vso[task.setvariable variable=functionAppName]$(out functionAppName)"
+                      echo "##vso[task.setvariable variable=webStorageName]$(out webStorageName)"
+
+                - task: AzureFunctionApp@2
+                  displayName: Deploy function app
+                  inputs:
+                    connectedServiceNameARM: $(azureServiceConnection)
+                    appType: functionApp
+                    appName: $(functionAppName)
+                    package: $(Pipeline.Workspace)/functions/functions.zip
+
+                - task: AzureCLI@2
+                  displayName: Publish static website
+                  inputs:
+                    azureSubscription: $(azureServiceConnection)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    workingDirectory: $(Pipeline.Workspace)
+                    inlineScript: |
+                      # Recreate the folder layout write-config.sh expects
+                      mkdir -p site && cp -r web site/frontend && cp -r scripts site/scripts
+                      RG=$(resourceGroup) bash site/scripts/write-config.sh
+                      az storage blob upload-batch --account-name $(webStorageName) --auth-mode key \
+                        -d '$web' -s site/frontend --overwrite -o none
+                      echo "Published to $(az storage account show -n $(webStorageName) --query primaryEndpoints.web -o tsv)"

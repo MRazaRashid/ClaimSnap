@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClaimSnap · Adjuster console</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/adjuster.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">Claim<span>Snap</span></a>
+    <nav>
+      <a href="index.html">Upload</a>
+      <a href="adjuster.html" aria-current="page">Adjuster console</a>
+    </nav>
+  </header>
+
+  <main class="wide">
+    <form id="search" class="toolbar card">
+      <label>Adjuster <select id="account"></select></label>
+      <label>Claim # <input id="claim" value="CS-24817" required pattern="CS-\d{5}"></label>
+      <label>Area
+        <select id="filter-area"><option value="">All</option></select>
+      </label>
+      <label>Status
+        <select id="filter-status">
+          <option value="">All</option><option>Active</option><option>Voided</option>
+        </select>
+      </label>
+      <button class="primary" type="submit">Search</button>
+    </form>
+
+    <p id="claim-summary" class="muted"></p>
+
+    <div class="console">
+      <section aria-label="Evidence photos">
+        <div id="grid" class="grid"></div>
+        <div class="pager">
+          <button id="prev" type="button">‹ Prev</button>
+          <span id="page-label"></span>
+          <button id="next" type="button">Next ›</button>
+        </div>
+      </section>
+
+      <aside id="detail" class="card detail" aria-live="polite">
+        <p class="muted">Select a photo to see its details.</p>
+      </aside>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" role="alert"></div>
+</body>
+</html>

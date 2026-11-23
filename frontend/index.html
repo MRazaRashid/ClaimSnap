@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClaimSnap · Add photos to your claim</title>
+  <meta name="description" content="Upload storm-damage photos to your home insurance claim.">
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/upload.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="index.html">Claim<span>Snap</span></a>
+    <nav>
+      <a href="index.html" aria-current="page">Upload</a>
+      <a href="adjuster.html">Adjuster console</a>
+    </nav>
+  </header>
+
+  <main class="narrow">
+    <h1>Add photos to your claim</h1>
+    <p class="muted">JPEG or PNG, up to 10&nbsp;MB each. Photos are stored exactly as you send them.</p>
+
+    <form id="upload-form" class="card stack" novalidate>
+      <div class="row">
+        <label>Signed in as
+          <select id="account"></select>
+        </label>
+        <label>Claim reference
+          <input id="claim" value="CS-24817" required pattern="CS-\d{5}" autocomplete="off">
+        </label>
+      </div>
+
+      <label class="drop">
+        <input id="files" type="file" accept="image/jpeg,image/png" multiple>
+        <span id="drop-text">Tap to take or choose photos</span>
+      </label>
+
+      <label>Caption
+        <input id="caption" maxlength="500" placeholder="e.g. Kitchen ceiling leak">
+      </label>
+
+      <label>Area
+        <select id="area">
+          <option>Roof</option><option>Ceiling</option><option>Walls</option>
+          <option>Windows</option><option>Garden</option><option>Other</option>
+        </select>
+      </label>
+
+      <button id="submit" type="submit" class="primary">Upload evidence</button>
+      <p id="progress" class="muted" role="status" aria-live="polite"></p>
+      <ol id="queue" class="queue"></ol>
+    </form>
+
+    <section class="stack">
+      <h2>Photos on this claim</h2>
+      <div id="gallery" class="grid"><p class="muted">Loading…</p></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="alert"></div>
+</body>
+</html>

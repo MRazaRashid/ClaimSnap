@@ -1,0 +1,23 @@
+node_modules/
+frontend/js/config.js
+functions/local.settings.json
+*.zip
+.env
+
+# Local backups
+*.backup
+
+# Environment files
+.env.*
+!.env.example
+
+
+# Local Azure deployment parameters and secrets
+*.bicepparam.local
+*.parameters.local.json
+*.tfvars
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

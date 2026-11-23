@@ -1,0 +1,84 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": { "type": "Object", "defaultValue": {} }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": { "method": "GET", "relativePath": "evidence/{evidenceId}" }
+    }
+  },
+  "actions": {
+    "Get_evidence": {
+      "type": "ApiConnection",
+      "runAfter": {},
+      "inputs": {
+        "host": { "connection": { "name": "@parameters('$connections')['sql']['connectionId']" } },
+        "method": "post",
+        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('default'))},@{encodeURIComponent(encodeURIComponent('default'))}/procedures/@{encodeURIComponent(encodeURIComponent('[dbo].[usp_GetEvidence]'))}",
+        "body": { "evidenceId": "@triggerOutputs()['relativePathParameters']['evidenceId']" }
+      }
+    },
+    "Result": {
+      "type": "Compose",
+      "runAfter": { "Get_evidence": ["Succeeded"] },
+      "inputs": "@first(body('Get_evidence')?['resultsets']?['Table1'])"
+    },
+    "If_found": {
+      "type": "If",
+      "runAfter": { "Result": ["Succeeded"] },
+      "expression": { "and": [{ "equals": ["@outputs('Result')?['httpStatus']", 200] }] },
+      "actions": {
+        "Get_metadata": {
+          "type": "ApiConnection",
+          "runAfter": {},
+          "inputs": {
+            "host": { "connection": { "name": "@parameters('$connections')['documentdb']['connectionId']" } },
+            "method": "get",
+            "path": "/v2/cosmosdb/@{encodeURIComponent('AccountNameFromSettings')}/dbs/@{encodeURIComponent('evidence')}/colls/@{encodeURIComponent('metadata')}/docs/@{encodeURIComponent(outputs('Result')?['evidenceId'])}",
+            "headers": { "x-ms-documentdb-raw-partitionkey": "\"@{outputs('Result')?['claimRef']}\"" }
+          }
+        },
+        "Create_read_link": {
+          "type": "ApiConnection",
+          "runAfter": {},
+          "inputs": {
+            "host": { "connection": { "name": "@parameters('$connections')['azureblob']['connectionId']" } },
+            "method": "post",
+            "path": "/v2/datasets/@{encodeURIComponent('AccountNameFromSettings')}/CreateSharedLinkByPath",
+            "queries": { "path": "/evidence-originals/@{outputs('Result')?['fileLocator']}" },
+            "body": { "Permissions": "Read", "AccessProtocol": "HttpsOnly", "ExpiryTime": "@{addMinutes(utcNow(), 15)}" }
+          }
+        },
+        "Found": {
+          "type": "Response",
+          "kind": "Http",
+          "runAfter": { "Get_metadata": ["Succeeded", "Failed"], "Create_read_link": ["Succeeded"] },
+          "inputs": {
+            "statusCode": 200,
+            "headers": { "Content-Type": "application/json" },
+            "body": "@addProperty(addProperty(addProperty(removeProperty(outputs('Result'), 'httpStatus'), 'readUrl', body('Create_read_link')?['WebUrl']), 'metadata', if(equals(actions('Get_metadata')?['status'], 'Succeeded'), body('Get_metadata'), null)), 'audit', coalesce(body('Get_evidence')?['resultsets']?['Table2'], json('[]')))"
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Not_found": {
+            "type": "Response",
+            "kind": "Http",
+            "runAfter": {},
+            "inputs": {
+              "statusCode": "@outputs('Result')?['httpStatus']",
+              "headers": { "Content-Type": "application/json" },
+              "body": "@outputs('Result')"
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}

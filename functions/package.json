@@ -1,0 +1,18 @@
+{
+  "name": "claimsnap-functions",
+  "version": "1.0.0",
+  "private": true,
+  "description": "HTTP-triggered function that validates evidence photos and extracts their hash and EXIF data",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.17.1",
+    "exifr": "^7.1.3"
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": { "type": "Object", "defaultValue": {} }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": { "method": "GET", "relativePath": "claims/{claimId}/evidence" }
+    }
+  },
+  "actions": {
+    "Init_items": {
+      "type": "InitializeVariable",
+      "runAfter": {},
+      "inputs": { "variables": [{ "name": "items", "type": "array", "value": [] }] }
+    },
+    "List_evidence": {
+      "type": "ApiConnection",
+      "runAfter": { "Init_items": ["Succeeded"] },
+      "inputs": {
+        "host": { "connection": { "name": "@parameters('$connections')['sql']['connectionId']" } },
+        "method": "post",
+        "path": "/v2/datasets/@{encodeURIComponent(encodeURIComponent('default'))},@{encodeURIComponent(encodeURIComponent('default'))}/procedures/@{encodeURIComponent(encodeURIComponent('[dbo].[usp_ListEvidence]'))}",
+        "body": { "claimRef": "@triggerOutputs()['relativePathParameters']['claimId']" }
+      }
+    },
+    "Result": {
+      "type": "Compose",
+      "runAfter": { "List_evidence": ["Succeeded"] },
+      "inputs": "@first(body('List_evidence')?['resultsets']?['Table1'])"
+    },
+    "If_found": {
+      "type": "If",
+      "runAfter": { "Result": ["Succeeded"] },
+      "expression": { "and": [{ "equals": ["@outputs('Result')?['httpStatus']", 200] }] },
+      "actions": {
+        "Query_metadata": {
+          "type": "ApiConnection",
+          "runAfter": {},
+          "inputs": {
+            "host": { "connection": { "name": "@parameters('$connections')['documentdb']['connectionId']" } },
+            "method": "post",
+            "path": "/v5/cosmosdb/@{encodeURIComponent('AccountNameFromSettings')}/dbs/@{encodeURIComponent('evidence')}/colls/@{encodeURIComponent('metadata')}/query",
+            "headers": { "x-ms-documentdb-raw-partitionkey": "\"@{outputs('Result')?['claimRef']}\"" },
+            "body": { "query": "SELECT * FROM c WHERE c.claimId = '@{outputs('Result')?['claimRef']}'" }
+          }
+        },
+        "For_each_item": {
+          "type": "Foreach",
+          "runAfter": { "Query_metadata": ["Succeeded"] },
+          "foreach": "@coalesce(body('List_evidence')?['resultsets']?['Table2'], json('[]'))",
+          "actions": {
+            "Create_read_link": {
+              "type": "ApiConnection",
+              "runAfter": {},
+              "inputs": {
+                "host": { "connection": { "name": "@parameters('$connections')['azureblob']['connectionId']" } },
+                "method": "post",
+                "path": "/v2/datasets/@{encodeURIComponent('AccountNameFromSettings')}/CreateSharedLinkByPath",
+                "queries": { "path": "/evidence-originals/@{items('For_each_item')?['fileLocator']}" },
+                "body": { "Permissions": "Read", "AccessProtocol": "HttpsOnly", "ExpiryTime": "@{addMinutes(utcNow(), 15)}" }
+              }
+            },
+            "Match_metadata": {
+              "type": "Query",
+              "runAfter": {},
+              "inputs": {
+                "from": "@coalesce(body('Query_metadata')?['value'], body('Query_metadata')?['Documents'], json('[]'))",
+                "where": "@equals(item()?['id'], items('For_each_item')?['evidenceId'])"
+              }
+            },
+            "Append_item": {
+              "type": "AppendToArrayVariable",
+              "runAfter": { "Create_read_link": ["Succeeded"], "Match_metadata": ["Succeeded"] },
+              "inputs": {
+                "name": "items",
+                "value": "@addProperty(addProperty(items('For_each_item'), 'readUrl', body('Create_read_link')?['WebUrl']), 'metadata', first(body('Match_metadata')))"
+              }
+            }
+          }
+        },
+        "Found": {
+          "type": "Response",
+          "kind": "Http",
+          "runAfter": { "For_each_item": ["Succeeded"] },
+          "inputs": {
+            "statusCode": 200,
+            "headers": { "Content-Type": "application/json" },
+            "body": {
+              "claim": "@removeProperty(outputs('Result'), 'httpStatus')",
+              "items": "@variables('items')"
+            }
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Not_found": {
+            "type": "Response",
+            "kind": "Http",
+            "runAfter": {},
+            "inputs": {
+              "statusCode": "@outputs('Result')?['httpStatus']",
+              "headers": { "Content-Type": "application/json" },
+              "body": "@outputs('Result')"
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {}
+}
